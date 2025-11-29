@@ -25,9 +25,13 @@ def parse_course_plan(csv_path, course_name, unit_number=None):
         sys.exit(1)
 
     if unit_number:
-        course_df = course_df[course_df['unit_no'] == str(unit_number)]
+        # 複数ユニット対応: カンマ区切りで複数指定可能 (例: "1,2,3,4")
+        unit_numbers = [u.strip() for u in str(unit_number).split(',')]
+        course_df = course_df[course_df['unit_no'].isin(unit_numbers)]
         if course_df.empty:
-            print(f"Error: Unit '{unit_number}' not found for course '{course_name}'.", file=sys.stderr)
+            print(f"Error: Units '{unit_number}' not found for course '{course_name}'.", file=sys.stderr)
+            available_units = df[df['course'] == course_name]['unit_no'].unique()
+            print(f"Available units: {', '.join(map(str, sorted(available_units)))}", file=sys.stderr)
             sys.exit(1)
     
     course_df['unit_no'] = pd.to_numeric(course_df['unit_no'])
