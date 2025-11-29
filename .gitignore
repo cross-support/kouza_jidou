@@ -1,0 +1,36 @@
+# Python
+*.pyc
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+ENV/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Data files (too large for git, user-generated)
+data/projects/*.json
+data/outputs/*.json
+data/outputs/*.txt
+
+# Keep directory structure
+!data/.gitkeep
+!data/projects/.gitkeep
+!data/outputs/.gitkeep
+
+# Test files
+debug_transcript.py
+test_*.py
+sample_*.txt
+web_urls.txt
+youtube_urls.txt
+
+# Logs
+*.log
