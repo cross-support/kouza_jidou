@@ -125,9 +125,8 @@ class CourseResearcher:
             lines = [line.strip() for line in text.split('\n') if line.strip()]
             cleaned_text = '\n'.join(lines)
 
-            # 文字数制限（最大10000文字）
-            if len(cleaned_text) > 10000:
-                cleaned_text = cleaned_text[:10000] + '...'
+            # 文字数制限を撤廃（全文取得）
+            # 以前は10,000文字制限がありましたが、講座の品質向上のため全文を取得します
 
             print(f"    ✓ {len(cleaned_text)}文字を抽出")
 
