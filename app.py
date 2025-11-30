@@ -40,6 +40,45 @@ def auto_save_project(project_name, web_urls, youtube_urls, course_config=None):
     except Exception as e:
         return False
 
+def preview_url(url: str) -> dict:
+    """URLのプレビュー情報を取得（タイトルとスニペット）"""
+    try:
+        import requests
+        from bs4 import BeautifulSoup
+
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+        }
+
+        response = requests.get(url, headers=headers, timeout=5)
+        soup = BeautifulSoup(response.content, 'html.parser')
+
+        # タイトル取得
+        title = soup.find('title')
+        title_text = title.get_text().strip() if title else "タイトルなし"
+
+        # メタディスクリプション取得
+        meta_desc = soup.find('meta', attrs={'name': 'description'})
+        description = meta_desc.get('content', '')[:150] if meta_desc else ""
+
+        # テキストのスニペット（最初の150文字）
+        if not description:
+            text = soup.get_text(separator=' ', strip=True)
+            description = text[:150] + "..." if len(text) > 150 else text
+
+        return {
+            'success': True,
+            'title': title_text,
+            'description': description,
+            'url': url
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'error': str(e),
+            'url': url
+        }
+
 def estimate_tokens(text: str) -> int:
     """
     テキストのトークン数を推定
@@ -348,6 +387,62 @@ with st.sidebar:
             except Exception as e:
                 st.error(f"❌ 復元エラー: {str(e)}")
 
+    # 📊 統計ダッシュボード
+    if projects:
+        st.markdown("---")
+        st.markdown("### 📊 統計ダッシュボード")
+
+        # 全プロジェクトの統計を計算
+        total_projects = len(projects)
+        total_web_urls = 0
+        total_youtube_urls = 0
+        projects_with_research = 0
+        projects_with_quality = 0
+
+        for project in projects:
+            # プロジェクトファイルを読み込む
+            project_file = PROJECTS_DIR / f"{project}.json"
+            if project_file.exists():
+                with open(project_file, 'r', encoding='utf-8') as f:
+                    project_data = json.load(f)
+                    total_web_urls += len(project_data.get('web_urls', []))
+                    total_youtube_urls += len(project_data.get('youtube_urls', []))
+
+            # リサーチ完了の確認
+            web_file = OUTPUTS_DIR / f"{project}_web.json"
+            if web_file.exists():
+                projects_with_research += 1
+
+            # 品質レポートの確認
+            quality_file = OUTPUTS_DIR / f"{project}_quality.json"
+            if quality_file.exists():
+                projects_with_research += 1
+
+        # 統計を表示
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("総プロジェクト数", total_projects)
+            st.metric("総Web URL数", total_web_urls)
+        with col2:
+            st.metric("リサーチ完了", f"{projects_with_research}/{total_projects}")
+            st.metric("総YouTube数", total_youtube_urls)
+
+        # プロジェクト一覧
+        with st.expander("📋 プロジェクト一覧"):
+            for project in projects:
+                project_file = PROJECTS_DIR / f"{project}.json"
+                if project_file.exists():
+                    with open(project_file, 'r', encoding='utf-8') as f:
+                        project_data = json.load(f)
+                        updated_at = project_data.get('updated_at', '不明')
+                        web_count = len(project_data.get('web_urls', []))
+                        yt_count = len(project_data.get('youtube_urls', []))
+
+                        st.write(f"**{project}**")
+                        st.write(f"  - 更新: {updated_at[:10] if updated_at != '不明' else '不明'}")
+                        st.write(f"  - URL: Web {web_count}件, YouTube {yt_count}件")
+                        st.write("---")
+
 # メインコンテンツ
 if not st.session_state.current_project:
     st.markdown('<div class="info-box">', unsafe_allow_html=True)
@@ -369,7 +464,7 @@ else:
         st.markdown("### 🌐 Web記事のURL")
         st.markdown('</div>', unsafe_allow_html=True)
 
-        col1, col2 = st.columns([4, 1])
+        col1, col2, col3 = st.columns([4, 1, 1])
         with col1:
             new_web_url = st.text_input(
                 "WebのURLを入力",
@@ -377,6 +472,16 @@ else:
                 key="new_web_url"
             )
         with col2:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("🔍 プレビュー", key="preview_web_url"):
+                if new_web_url:
+                    with st.spinner("プレビュー取得中..."):
+                        preview_data = preview_url(new_web_url)
+                        if preview_data['success']:
+                            st.info(f"📄 **{preview_data['title']}**\n\n{preview_data['description']}")
+                        else:
+                            st.warning(f"⚠️ プレビュー取得失敗: {preview_data['error']}")
+        with col3:
             st.markdown("<br>", unsafe_allow_html=True)
             if st.button("➕ 追加", key="add_web_url"):
                 if new_web_url and new_web_url not in st.session_state.web_urls:
