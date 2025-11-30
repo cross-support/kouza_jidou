@@ -15,6 +15,69 @@ from datetime import datetime
 from pathlib import Path
 import time
 
+# ユーティリティ関数
+def auto_save_project(project_name, web_urls, youtube_urls, course_config=None):
+    """プロジェクトを自動保存"""
+    try:
+        PROJECTS_DIR = Path(__file__).parent / "data" / "projects"
+        PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
+
+        project_data = {
+            "name": project_name,
+            "updated_at": datetime.now().isoformat(),
+            "web_urls": web_urls,
+            "youtube_urls": youtube_urls,
+        }
+
+        if course_config:
+            project_data['course_config'] = course_config
+
+        project_file = PROJECTS_DIR / f"{project_name}.json"
+        with open(project_file, 'w', encoding='utf-8') as f:
+            json.dump(project_data, f, ensure_ascii=False, indent=2)
+
+        return True
+    except Exception as e:
+        return False
+
+def estimate_tokens(text: str) -> int:
+    """
+    テキストのトークン数を推定
+    日本語: 約1トークン = 2-3文字
+    英語: 約1トークン = 4文字
+    """
+    if not text:
+        return 0
+    # 簡易推定: 日本語多めの場合は2.5文字/トークン
+    return int(len(text) / 2.5)
+
+def format_token_count(tokens: int) -> str:
+    """トークン数を読みやすい形式でフォーマット"""
+    if tokens < 1000:
+        return f"{tokens:,} トークン"
+    elif tokens < 1000000:
+        return f"{tokens/1000:.1f}K トークン"
+    else:
+        return f"{tokens/1000000:.1f}M トークン"
+
+def get_token_warning_level(tokens: int) -> tuple:
+    """
+    トークン数に基づいて警告レベルを返す
+    Returns: (level, icon, color, message)
+    """
+    GEMINI_LIMIT = 2000000  # Gemini 2Mトークン制限
+
+    if tokens < 50000:
+        return ("safe", "✅", "green", "問題なし")
+    elif tokens < 100000:
+        return ("good", "👍", "blue", "良好")
+    elif tokens < 500000:
+        return ("warning", "⚠️", "orange", "やや多め")
+    elif tokens < GEMINI_LIMIT:
+        return ("caution", "🔶", "orange", "要注意")
+    else:
+        return ("danger", "❌", "red", "制限超過")
+
 # ページ設定
 st.set_page_config(
     page_title="講座自動化システム",
@@ -166,9 +229,124 @@ with st.sidebar:
                 "web_urls": st.session_state.web_urls,
                 "youtube_urls": st.session_state.youtube_urls,
             }
+            # 講座設定も保存
+            if 'course_config' in st.session_state:
+                project_data['course_config'] = st.session_state.course_config
+
             with open(PROJECTS_DIR / f"{st.session_state.current_project}.json", 'w', encoding='utf-8') as f:
                 json.dump(project_data, f, ensure_ascii=False, indent=2)
             st.success("✅ 保存しました！")
+
+        # 📦 バックアップ/復元機能
+        st.markdown("---")
+        st.markdown("### 📦 バックアップ")
+
+        # バックアップ作成（ダウンロード）
+        if st.button("⬇️ プロジェクトをダウンロード", key="download_backup"):
+            project_name = st.session_state.current_project
+
+            # 全データを集める
+            backup_data = {
+                "project_name": project_name,
+                "backup_date": datetime.now().isoformat(),
+                "version": "1.0"
+            }
+
+            # プロジェクト設定
+            project_file = PROJECTS_DIR / f"{project_name}.json"
+            if project_file.exists():
+                with open(project_file, 'r', encoding='utf-8') as f:
+                    backup_data['project_config'] = json.load(f)
+
+            # リサーチデータ
+            web_file = OUTPUTS_DIR / f"{project_name}_web.json"
+            if web_file.exists():
+                with open(web_file, 'r', encoding='utf-8') as f:
+                    backup_data['web_research'] = json.load(f)
+
+            youtube_file = OUTPUTS_DIR / f"{project_name}_youtube.json"
+            if youtube_file.exists():
+                with open(youtube_file, 'r', encoding='utf-8') as f:
+                    backup_data['youtube_research'] = json.load(f)
+
+            # 品質・用語レポート
+            quality_file = OUTPUTS_DIR / f"{project_name}_quality.json"
+            if quality_file.exists():
+                with open(quality_file, 'r', encoding='utf-8') as f:
+                    backup_data['quality_report'] = json.load(f)
+
+            terminology_file = OUTPUTS_DIR / f"{project_name}_terminology.json"
+            if terminology_file.exists():
+                with open(terminology_file, 'r', encoding='utf-8') as f:
+                    backup_data['terminology_report'] = json.load(f)
+
+            # プロンプト
+            prompt_file = OUTPUTS_DIR / f"{project_name}_prompt.txt"
+            if prompt_file.exists():
+                with open(prompt_file, 'r', encoding='utf-8') as f:
+                    backup_data['generated_prompt'] = f.read()
+
+            # JSONとしてダウンロード
+            backup_json = json.dumps(backup_data, ensure_ascii=False, indent=2)
+            st.download_button(
+                label="💾 バックアップファイルをダウンロード",
+                data=backup_json,
+                file_name=f"{project_name}_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                mime="application/json"
+            )
+
+        # バックアップから復元（アップロード）
+        st.markdown("### 📥 復元")
+        uploaded_file = st.file_uploader(
+            "バックアップファイルをアップロード",
+            type=['json'],
+            key="upload_backup"
+        )
+
+        if uploaded_file is not None:
+            try:
+                backup_data = json.load(uploaded_file)
+                restored_name = backup_data.get('project_name', 'restored_project')
+
+                # プロジェクト設定を復元
+                if 'project_config' in backup_data:
+                    project_file = PROJECTS_DIR / f"{restored_name}.json"
+                    with open(project_file, 'w', encoding='utf-8') as f:
+                        json.dump(backup_data['project_config'], f, ensure_ascii=False, indent=2)
+
+                # リサーチデータを復元
+                if 'web_research' in backup_data:
+                    web_file = OUTPUTS_DIR / f"{restored_name}_web.json"
+                    with open(web_file, 'w', encoding='utf-8') as f:
+                        json.dump(backup_data['web_research'], f, ensure_ascii=False, indent=2)
+
+                if 'youtube_research' in backup_data:
+                    youtube_file = OUTPUTS_DIR / f"{restored_name}_youtube.json"
+                    with open(youtube_file, 'w', encoding='utf-8') as f:
+                        json.dump(backup_data['youtube_research'], f, ensure_ascii=False, indent=2)
+
+                # 品質・用語レポートを復元
+                if 'quality_report' in backup_data:
+                    quality_file = OUTPUTS_DIR / f"{restored_name}_quality.json"
+                    with open(quality_file, 'w', encoding='utf-8') as f:
+                        json.dump(backup_data['quality_report'], f, ensure_ascii=False, indent=2)
+
+                if 'terminology_report' in backup_data:
+                    terminology_file = OUTPUTS_DIR / f"{restored_name}_terminology.json"
+                    with open(terminology_file, 'w', encoding='utf-8') as f:
+                        json.dump(backup_data['terminology_report'], f, ensure_ascii=False, indent=2)
+
+                # プロンプトを復元
+                if 'generated_prompt' in backup_data:
+                    prompt_file = OUTPUTS_DIR / f"{restored_name}_prompt.txt"
+                    with open(prompt_file, 'w', encoding='utf-8') as f:
+                        f.write(backup_data['generated_prompt'])
+
+                st.success(f"✅ プロジェクト '{restored_name}' を復元しました！")
+                st.info("👈 左のプロジェクト選択から復元したプロジェクトを選択してください")
+
+            except Exception as e:
+                st.error(f"❌ 復元エラー: {str(e)}")
 
 # メインコンテンツ
 if not st.session_state.current_project:
@@ -203,7 +381,13 @@ else:
             if st.button("➕ 追加", key="add_web_url"):
                 if new_web_url and new_web_url not in st.session_state.web_urls:
                     st.session_state.web_urls.append(new_web_url)
-                    st.success("追加しました！")
+                    # 自動保存
+                    auto_save_project(
+                        st.session_state.current_project,
+                        st.session_state.web_urls,
+                        st.session_state.youtube_urls
+                    )
+                    st.success("追加しました！（自動保存済み）")
                     st.rerun()
 
         # 登録済みURL一覧
@@ -216,6 +400,12 @@ else:
                 with col2:
                     if st.button("🗑️", key=f"delete_web_{i}"):
                         st.session_state.web_urls.pop(i)
+                        # 自動保存
+                        auto_save_project(
+                            st.session_state.current_project,
+                            st.session_state.web_urls,
+                            st.session_state.youtube_urls
+                        )
                         st.rerun()
         else:
             st.info("URLを追加してください（3〜5件推奨）")
@@ -238,7 +428,13 @@ else:
             if st.button("➕ 追加", key="add_youtube_url"):
                 if new_youtube_url and new_youtube_url not in st.session_state.youtube_urls:
                     st.session_state.youtube_urls.append(new_youtube_url)
-                    st.success("追加しました！")
+                    # 自動保存
+                    auto_save_project(
+                        st.session_state.current_project,
+                        st.session_state.web_urls,
+                        st.session_state.youtube_urls
+                    )
+                    st.success("追加しました！（自動保存済み）")
                     st.rerun()
 
         # 登録済みURL一覧
@@ -251,6 +447,12 @@ else:
                 with col2:
                     if st.button("🗑️", key=f"delete_youtube_{i}"):
                         st.session_state.youtube_urls.pop(i)
+                        # 自動保存
+                        auto_save_project(
+                            st.session_state.current_project,
+                            st.session_state.web_urls,
+                            st.session_state.youtube_urls
+                        )
                         st.rerun()
         else:
             st.info("URLを追加してください（1〜3件推奨）")
@@ -355,6 +557,51 @@ else:
                                 web_sources = summary.get('web_research', {}).get('sources', 0)
                                 yt_videos = summary.get('youtube_research', {}).get('videos', 0)
                                 st.metric("成功率", f"{web_sources + yt_videos}/{len(st.session_state.web_urls) + len(st.session_state.youtube_urls)}")
+
+                            # トークン数推定を表示
+                            total_chars = summary.get('total', {}).get('total_characters', 0)
+                            estimated_tokens = estimate_tokens(str(total_chars) * 10)  # 概算
+
+                            # より正確な推定: 実際のリサーチデータを読み込む
+                            web_file = OUTPUTS_DIR / f"{project_name}_web.json"
+                            youtube_file = OUTPUTS_DIR / f"{project_name}_youtube.json"
+                            total_text = ""
+
+                            if web_file.exists():
+                                with open(web_file, 'r', encoding='utf-8') as f:
+                                    web_data = json.load(f)
+                                    for source in web_data.get('sources', []):
+                                        total_text += source.get('text', '')
+
+                            if youtube_file.exists():
+                                with open(youtube_file, 'r', encoding='utf-8') as f:
+                                    yt_data = json.load(f)
+                                    for transcript in yt_data.get('transcriptions', []):
+                                        total_text += transcript.get('text', '')
+
+                            estimated_tokens = estimate_tokens(total_text)
+                            level, icon, color, message = get_token_warning_level(estimated_tokens)
+
+                            st.markdown("---")
+                            st.markdown("### 📏 プロンプトサイズ推定")
+
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("推定トークン数", format_token_count(estimated_tokens))
+                            with col2:
+                                st.metric("状態", f"{icon} {message}")
+                            with col3:
+                                gemini_limit = 2000000
+                                usage_percent = (estimated_tokens / gemini_limit) * 100
+                                st.metric("Gemini制限", f"{usage_percent:.1f}% 使用")
+
+                            # 警告メッセージ
+                            if level == "danger":
+                                st.error("❌ Gemini の入力制限（2Mトークン）を超えています。URL数を減らしてください。")
+                            elif level == "caution":
+                                st.warning("⚠️ トークン数が多めです。プロンプト生成が失敗する可能性があります。")
+                            elif level == "warning":
+                                st.info("💡 トークン数はやや多めですが、問題ありません。")
 
                         # 出力を表示
                         with st.expander("📄 実行ログを見る"):
@@ -564,6 +811,57 @@ else:
             st.markdown("### ⚙️ 講座の詳細設定")
             st.markdown('</div>', unsafe_allow_html=True)
 
+            # 📋 テンプレート機能
+            st.markdown('<div class="step-card">', unsafe_allow_html=True)
+            st.markdown("### 📋 テンプレート")
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            # プリセットテンプレート
+            TEMPLATES = {
+                "カスタム（手動入力）": None,
+                "初心者向けAI講座": {
+                    "learner_profile": "AIを初めて学ぶビジネスパーソン",
+                    "target_behavior": "AI の基本概念を理解し、日常業務で活用できる",
+                    "duration": "30分",
+                    "tone": "親しみやすく、実践的なトーン"
+                },
+                "中級者向けChatGPT活用講座": {
+                    "learner_profile": "ChatGPTの基本を理解しており、さらに高度な活用法を学びたいビジネスパーソン",
+                    "target_behavior": "プロンプトエンジニアリングを理解し、業務効率を大幅に向上できる",
+                    "duration": "45分",
+                    "tone": "丁寧で専門的なトーン"
+                },
+                "経営層向けAI戦略講座": {
+                    "learner_profile": "経営層・管理職でAI導入を検討している方",
+                    "target_behavior": "AI導入の戦略を立案し、組織変革を推進できる",
+                    "duration": "60分",
+                    "tone": "ビジネスライクで効率的なトーン"
+                },
+                "エンジニア向け技術講座": {
+                    "learner_profile": "プログラミング経験があり、AIの技術的な側面を学びたいエンジニア",
+                    "target_behavior": "AI APIを活用したシステム開発ができる",
+                    "duration": "60分",
+                    "tone": "丁寧で専門的なトーン"
+                }
+            }
+
+            selected_template = st.selectbox(
+                "テンプレートを選択（オプション）",
+                list(TEMPLATES.keys()),
+                key="template_selector"
+            )
+
+            if selected_template != "カスタム（手動入力）":
+                if st.button("📥 テンプレートを適用", key="apply_template"):
+                    template_data = TEMPLATES[selected_template]
+                    if 'template_data' not in st.session_state:
+                        st.session_state.template_data = {}
+                    st.session_state.template_data = template_data
+                    st.success(f"✅ テンプレート '{selected_template}' を適用しました")
+                    st.rerun()
+
+            st.markdown("---")
+
             # CSVから講座リストを取得
             csv_path = Path(__file__).parent / "自動R7.11 講座計画表.csv"
             if csv_path.exists():
@@ -577,6 +875,9 @@ else:
                     courses = []
             else:
                 courses = []
+
+            # テンプレートデータを取得
+            template_values = st.session_state.get('template_data', {})
 
             with st.form("course_config_form"):
                 course_name = st.selectbox(
@@ -594,34 +895,45 @@ else:
 
                 learner_profile = st.text_area(
                     "👥 受講者像",
+                    value=template_values.get('learner_profile', ''),
                     placeholder="例: ChatGPTを業務で使いたいビジネスパーソン",
                     key="learner_profile"
                 )
 
                 target_behavior = st.text_area(
                     "🎯 到達目標（ゴール行動）",
+                    value=template_values.get('target_behavior', ''),
                     placeholder="例: ChatGPTを適切に活用して業務効率を向上できる",
                     key="target_behavior"
                 )
 
                 col1, col2 = st.columns(2)
                 with col1:
+                    durations = ["10分", "15分", "20分", "30分", "45分", "60分"]
+                    default_duration = template_values.get('duration', '30分')
+                    duration_index = durations.index(default_duration) if default_duration in durations else 3
+
                     duration = st.selectbox(
                         "⏱️ 想定時間",
-                        ["10分", "15分", "20分", "30分", "45分", "60分"],
-                        index=3,
+                        durations,
+                        index=duration_index,
                         key="duration"
                     )
 
                 with col2:
+                    tones = [
+                        "親しみやすく、実践的なトーン",
+                        "丁寧で専門的なトーン",
+                        "カジュアルで楽しいトーン",
+                        "ビジネスライクで効率的なトーン"
+                    ]
+                    default_tone = template_values.get('tone', tones[0])
+                    tone_index = tones.index(default_tone) if default_tone in tones else 0
+
                     tone = st.selectbox(
                         "🎨 トーン＆マナー",
-                        [
-                            "親しみやすく、実践的なトーン",
-                            "丁寧で専門的なトーン",
-                            "カジュアルで楽しいトーン",
-                            "ビジネスライクで効率的なトーン"
-                        ],
+                        tones,
+                        index=tone_index,
                         key="tone"
                     )
 
